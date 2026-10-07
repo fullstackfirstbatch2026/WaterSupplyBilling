@@ -1,0 +1,324 @@
+CREATE DATABASE water_billing;
+
+USE water_billing;
+SHOW TABLES;
+DESCRIBE consumers;
+DESCRIBE connections;
+DESCRIBE readings;
+DESCRIBE bills;
+
+CREATE TABLE consumers (
+    consumer_id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    address VARCHAR(200),
+    phone VARCHAR(15)
+);
+
+
+CREATE TABLE connections (
+    connection_id INT PRIMARY KEY AUTO_INCREMENT,
+    consumer_id INT NOT NULL,
+    connection_type VARCHAR(30),
+    connection_date DATE,
+
+    FOREIGN KEY (consumer_id)
+        REFERENCES consumers(consumer_id)
+);
+
+
+CREATE TABLE readings (
+    reading_id INT PRIMARY KEY AUTO_INCREMENT,
+    connection_id INT NOT NULL,
+    previous_reading DECIMAL(10,2) NOT NULL,
+    current_reading DECIMAL(10,2) NOT NULL,
+    reading_date DATE,
+
+    FOREIGN KEY (connection_id)
+        REFERENCES connections(connection_id)
+);
+
+
+CREATE TABLE bills (
+    bill_id INT PRIMARY KEY AUTO_INCREMENT,
+    consumer_id INT NOT NULL,
+    reading_id INT NOT NULL,
+    consumption DECIMAL(10,2),
+    water_charge DECIMAL(10,2),
+    bill_date DATE,
+    billing_status VARCHAR(20),
+
+    FOREIGN KEY (consumer_id)
+        REFERENCES consumers(consumer_id),
+
+    FOREIGN KEY (reading_id)
+        REFERENCES readings(reading_id)
+);
+
+
+INSERT INTO consumers (name, address, phone)
+VALUES
+('Arun', 'Chennai', '9876543210'),
+('Priya', 'Tambaram', '9876543211'),
+('Karthik', 'Avadi', '9876543212'),
+('Divya', 'Velachery', '9876543213'),
+('Rahul', 'Guindy', '9876543214');
+
+
+INSERT INTO connections
+(consumer_id, connection_type, connection_date)
+VALUES
+(1, 'Domestic', '2026-01-10'),
+(2, 'Domestic', '2026-02-15'),
+(3, 'Commercial', '2026-01-20'),
+(4, 'Domestic', '2026-03-05'),
+(5, 'Commercial', '2026-02-25');
+
+
+
+INSERT INTO readings
+(connection_id, previous_reading, current_reading, reading_date)
+VALUES
+(1, 100, 125, '2026-09-01'),
+(2, 200, 240, '2026-09-01'),
+(3, 500, 575, '2026-09-01'),
+(4, 300, 320, '2026-09-01'),
+(5, 800, 860, '2026-09-01');
+
+
+INSERT INTO bills
+(consumer_id, reading_id, consumption, water_charge, bill_date, billing_status)
+VALUES
+(1, 1, 25, 180.00, '2026-09-01', 'UNPAID'),
+(2, 2, 40, 330.00, '2026-09-01', 'PAID'),
+(3, 3, 75, 680.00, '2026-09-01', 'UNPAID'),
+(4, 4, 20, 130.00, '2026-09-01', 'PAID'),
+(5, 5, 60, 530.00, '2026-09-01', 'UNPAID');
+
+
+SELECT * FROM consumers;
+SELECT * FROM connections;
+SELECT * FROM readings;
+SELECT * FROM bills;
+
+----------------------------------------------------------------------
+JOIN
+-----------------------------------------------------------------------
+SELECT b.*
+        FROM bills b
+        JOIN consumers c
+            ON b.consumer_id = c.consumer_id
+        JOIN readings r
+            ON b.reading_id = r.reading_id
+        JOIN connections con
+            ON r.connection_id = con.connection_id;
+----------------------------------------------------------------
+SUBQUERY
+--------------------------------------------------------------
+SELECT
+    c.consumer_id,
+    c.name,
+    b.consumption
+FROM consumers c
+JOIN bills b
+    ON c.consumer_id = b.consumer_id
+WHERE b.consumption > (
+    SELECT AVG(consumption)
+    FROM bills
+);
+---------------------------------------------
+FUNCTION
+-----------------------------------------------
+
+DELIMITER //
+
+CREATE FUNCTION calculate_water_charge(units INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE charge DECIMAL(10,2);
+
+    IF units <= 10 THEN
+        SET charge = units * 5;
+
+    ELSEIF units <= 20 THEN
+        SET charge = (10 * 5) + ((units - 10) * 8);
+
+    ELSE
+        SET charge = (10 * 5) +
+                     (10 * 8) +
+                     ((units - 20) * 10);
+    END IF;
+
+    RETURN charge;
+END //
+
+DELIMITER ;
+
+SELECT calculate_water_charge(25);
+---------------------------------------------------
+PROCEDURE
+--------------------------------------------------
+
+
+
+
+DELIMITER //
+
+CREATE PROCEDURE generate_water_bill(IN 
+p_reading_id INT)
+BEGIN    DECLARE v_connection_id INT;
+    DECLARE v_consumer_id INT;
+    DECLARE v_previous_reading DECIMAL(10,2);
+    DECLARE v_current_reading DECIMAL(10,2);
+    DECLARE v_consumption DECIMAL(10,2);
+    DECLARE v_charge DECIMAL(10,2);
+    DECLARE v_bill_exists INT DEFAULT 0;
+
+ 
+    SELECT COUNT(*)
+    INTO v_bill_exists
+    FROM bills
+    WHERE reading_id = p_reading_id;
+
+    -- If bill already exists, stop
+    IF v_bill_exists > 0 THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Bill already exists for this reading';
+
+    ELSE
+
+        -- Get reading and consumer details
+        SELECT
+            r.connection_id,
+            c.consumer_id,
+            r.previous_reading,
+            r.current_reading
+        INTO
+            v_connection_id,
+            v_consumer_id,
+            v_previous_reading,
+            v_current_reading
+        FROM readings r
+        JOIN connections con
+            ON r.connection_id = con.connection_id
+        JOIN consumers c
+            ON con.consumer_id = c.consumer_id
+        WHERE r.reading_id = p_reading_id;
+
+        
+        SET v_consumption =
+            v_current_reading - v_previous_reading;
+
+       
+        SET v_charge =
+            calculate_water_charge(v_consumption);
+
+        -- Generate bill
+        INSERT INTO bills
+        (
+            consumer_id,
+            reading_id,
+            consumption,
+            water_charge,
+            bill_date
+        )
+        VALUES
+        (
+            v_consumer_id,
+            p_reading_id,
+            v_consumption,
+            v_charge,
+            CURDATE()
+        );
+
+    END IF;
+
+END //
+
+DELIMITER ;
+--------------------------------------------
+INSERT INTO readings
+(connection_id, previous_reading, current_reading, reading_date)
+VALUES
+(1, 125, 155, '2026-10-05');
+SELECT * FROM readings;
+
+CALL generate_water_bill(6);
+SELECT * FROM bills;
+
+------------------------------------
+Trigger
+--------------------------------------
+DELIMITER //
+
+CREATE TRIGGER set_billing_status
+BEFORE INSERT ON bills
+FOR EACH ROW
+BEGIN
+    SET NEW.billing_status = 'UNPAID';
+END //
+
+DELIMITER ;
+
+DELIMITER //
+
+CREATE TRIGGER update_billing_status
+BEFORE UPDATE ON bills
+FOR EACH ROW
+BEGIN
+    IF NEW.payment_date IS NOT NULL THEN
+        SET NEW.billing_status = 'PAID';
+    ELSE
+        SET NEW.billing_status = 'UNPAID';
+    END IF;
+END //
+
+DELIMITER ;
+
+ALTER TABLE bills
+ADD CONSTRAINT unique_reading_bill UNIQUE (reading_id);
+
+CALL generate_water_bill(7);
+
+SELECT * FROM bills;
+
+SELECT * FROM readings
+WHERE reading_id = 6;
+---------------------------------------------
+USAGE TREND
+-----------------------------------------------------
+SELECT
+    r.connection_id,
+    r.reading_date,
+    (r.current_reading - r.previous_reading) AS consumption
+FROM readings r
+WHERE r.connection_id = 1;
+-----------------------------------------------
+PREDICT BILLS
+----------------------------------------------------------------
+SELECT
+    r.connection_id,
+    ROUND(AVG(r.current_reading - r.previous_reading)) AS predicted_units,
+    calculate_water_charge(
+        ROUND(AVG(r.current_reading - r.previous_reading))
+    ) AS predicted_bill
+FROM readings r
+WHERE r.connection_id = 1
+GROUP BY r.connection_id;
+---------------------------------------------
+USAGE INSIGHT
+------------------------------------------------
+
+SELECT
+    connection_id,
+    reading_date,
+    (current_reading - previous_reading) AS consumption,
+    (
+        (current_reading - previous_reading)
+        - LAG(current_reading - previous_reading)
+          OVER (PARTITION BY connection_id ORDER BY reading_date)
+    ) AS consumption_change
+FROM readings
+WHERE connection_id = 1
+ORDER BY reading_date;
